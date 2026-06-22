@@ -1,0 +1,4 @@
+*.o
+test_malloc
+stress_test
+*.exe
