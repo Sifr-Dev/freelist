@@ -2,3 +2,4 @@
 test_malloc
 stress_test
 *.exe
+test_invariants
