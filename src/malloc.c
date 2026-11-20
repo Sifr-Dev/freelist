@@ -36,9 +36,21 @@ static unsigned char *heap_end;
 static void corruption_abort(const char *message)
 {
     size_t length = strlen(message);
+    size_t written = 0U;
 
-    (void)write(STDERR_FILENO, message, length);
-    (void)write(STDERR_FILENO, "\n", 1U);
+    /* Diagnostics are best effort; no allocation or stdio while corrupt. */
+    while (written < length) {
+        ssize_t result = write(STDERR_FILENO, message + written,
+                               length - written);
+
+        if (result <= 0) {
+            break;
+        }
+        written += (size_t)result;
+    }
+    if (write(STDERR_FILENO, "\n", 1U) < 0) {
+        /* A closed stderr must not suppress the required abort. */
+    }
     abort();
 }
 
