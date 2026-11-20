@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.compiler }} / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        target: [test, sanitize]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run ${{ matrix.target }}
+        run: make CC=${{ matrix.compiler }} ${{ matrix.target }}
