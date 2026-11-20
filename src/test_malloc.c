@@ -1,112 +1,212 @@
 #include "malloc.h"
+
+#include <assert.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <assert.h>
-#include <stdint.h>
-#include <limits.h>
+#include <unistd.h>
 
-static void fill(void *p, size_t n, unsigned char v) {
-    memset(p, v, n);
+static header_t *header_for(void *pointer)
+{
+    return (void *)((unsigned char *)pointer - sizeof(header_t));
 }
 
-int main(void) {
-    setvbuf(stdout, NULL, _IONBF, 0);
-    printf("Running malloc allocator tests...\n\n");
+static void test_alignment_and_coalescing(void)
+{
+    void *pointers[257];
 
-    /* Test 1: Basic allocation */
-    printf("Test 1: Basic allocation\n");
-    int *arr = (int *)my_malloc(10 * sizeof(int));
-    assert(arr != NULL);
-    printf("  PASS: allocated 10 ints\n");
-
-    /* Test 2: Write and read */
-    printf("Test 2: Write and read\n");
-    for (int i = 0; i < 10; i++) arr[i] = i * 2;
-    for (int i = 0; i < 10; i++) assert(arr[i] == i * 2);
-    printf("  PASS: wrote and read values correctly\n");
-
-    /* Test 3: Every allocation is 16-byte aligned */
-    printf("Test 3: 16-byte alignment of payloads\n");
-    for (size_t size = 1; size < 257; size += 7) {
-        void *p = my_malloc(size);
-        assert(p != NULL);
-        assert(((uintptr_t)p % 16) == 0);
-        my_free(p);
+    for (size_t size = 1U; size <= 257U; ++size) {
+        pointers[size - 1U] = my_malloc(size);
+        assert(pointers[size - 1U] != NULL);
+        assert((uintptr_t)pointers[size - 1U] %
+               (size_t)_Alignof(max_align_t) == 0U);
+        memset(pointers[size - 1U], (int)(size % 256U), size);
+        assert(debug_validate_heap() == 0);
     }
-    printf("  PASS: all tested sizes returned 16-byte aligned pointers\n");
+    for (size_t index = 0U; index < 257U; index += 2U) {
+        my_free(pointers[index]);
+        pointers[index] = NULL;
+    }
+    for (size_t index = 1U; index < 257U; index += 2U) {
+        my_free(pointers[index]);
+        pointers[index] = NULL;
+    }
+    assert(debug_validate_heap() == 0);
+    printf("alignment and bidirectional coalescing: PASS\n");
+}
 
-    /* Test 4: calloc zero-initialized */
-    printf("Test 4: calloc zero-initialized\n");
-    int *zero = (int *)my_calloc(100, sizeof(int));
-    assert(zero != NULL);
-    for (int i = 0; i < 100; i++) assert(zero[i] == 0);
-    printf("  PASS: calloc returns zeroed memory\n");
+static void test_zero_and_overflow(void)
+{
+    void *pointer;
 
-    /* Test 5: calloc overflow is rejected */
-    printf("Test 5: calloc overflow rejected\n");
-    void *too_big = my_calloc(SIZE_MAX / sizeof(int) + 1, sizeof(int));
-    assert(too_big == NULL);
-    printf("  PASS: wrapped multiplication returns NULL\n");
-
-    /* Test 6: realloc grows and preserves data */
-    printf("Test 6: realloc preserves data on grow\n");
-    int *small = (int *)my_malloc(5 * sizeof(int));
-    for (int i = 0; i < 5; i++) small[i] = 42 + i;
-    int *bigger = (int *)my_realloc(small, 64 * sizeof(int));
-    assert(bigger != NULL);
-    for (int i = 0; i < 5; i++) assert(bigger[i] == 42 + i);
-    printf("  PASS: realloc preserved data\n");
-
-    /* Test 7: realloc shrink keeps pointer and data */
-    printf("Test 7: realloc shrink keeps pointer\n");
-    int *shrinkable = (int *)my_malloc(1024 * sizeof(int));
-    for (int i = 0; i < 1024; i++) shrinkable[i] = i;
-    int *shrunk = (int *)my_realloc(shrinkable, 16 * sizeof(int));
-    assert(shrunk == shrinkable);
-    for (int i = 0; i < 16; i++) assert(shrunk[i] == i);
-    printf("  PASS: in-place shrink preserved pointer and data\n");
-
-    /* Test 8: realloc grows in place into the adjacent free block */
-    printf("Test 8: realloc grows in place into free neighbor\n");
-    void *left = my_malloc(128);
-    void *right = my_malloc(4096);
-    assert(left && right);
-    my_free(right); /* free the neighbor */
-    void *left_grown = my_realloc(left, 2048);
-    assert(left_grown == left); /* same pointer: neighbor absorbed in place */
-    printf("  PASS: grew in place into the freed neighbor\n");
-
-    /* Test 9: free(NULL) and malloc(0) */
-    printf("Test 9: free(NULL) and malloc(0)\n");
     my_free(NULL);
-    assert(my_malloc(0) == NULL);
-    printf("  PASS\n");
+    errno = 0;
+    assert(my_malloc(0U) == NULL);
+    assert(errno == 0);
+    assert(my_calloc(0U, 64U) == NULL);
+    assert(my_calloc(64U, 0U) == NULL);
+    assert(my_realloc(NULL, 0U) == NULL);
 
-    /* Test 10: deallocate everything, big alloc must still work (coalescing) */
-    printf("Test 10: coalescing across many frees\n");
-    void *a = my_malloc(256);
-    void *b = my_malloc(256);
-    void *c = my_malloc(256);
-    fill(a, 256, 0xA5);
-    my_free(a);
-    my_free(b);
-    my_free(c);
-    void *big = my_malloc(4096);
-    assert(big != NULL);
-    {
-        extern void print_heap(void);
-        print_heap();
-        fflush(stdout);
+    errno = 0;
+    assert(my_malloc(SIZE_MAX) == NULL);
+    assert(errno == ENOMEM);
+    errno = 0;
+    assert(my_malloc(SIZE_MAX - 7U) == NULL);
+    assert(errno == ENOMEM);
+    errno = 0;
+    assert(my_calloc(SIZE_MAX / 4U + 1U, 4U) == NULL);
+    assert(errno == ENOMEM);
+    errno = 0;
+    assert(my_calloc(SIZE_MAX, 2U) == NULL);
+    assert(errno == ENOMEM);
+
+    pointer = my_malloc(64U);
+    assert(pointer != NULL);
+    memset(pointer, 0x5a, 64U);
+    errno = 0;
+    assert(my_realloc(pointer, SIZE_MAX) == NULL);
+    assert(errno == ENOMEM);
+    for (size_t index = 0U; index < 64U; ++index) {
+        assert(((unsigned char *)pointer)[index] == 0x5aU);
     }
-    fill(big, 4096, 0x5A);
-    my_free(big);
-    my_free(left_grown);
-    my_free(shrunk);
-    my_free(bigger);
-    my_free(arr);
-    my_free(zero);
-    printf("  PASS: large allocations succeed after full deallocations\n");
+    my_free(pointer);
+    printf("zero sizes and checked size arithmetic: PASS\n");
+}
 
-    printf("\nAll tests passed.\n");
+static void test_calloc_and_reuse(void)
+{
+    void *first = my_malloc(257U);
+    unsigned char *zeroed;
+
+    assert(first != NULL);
+    memset(first, 0xff, 257U);
+    my_free(first);
+    zeroed = my_calloc(31U, 7U);
+    assert(zeroed == first);
+    for (size_t index = 0U; index < 31U * 7U; ++index) {
+        assert(zeroed[index] == 0U);
+    }
+    my_free(zeroed);
+    printf("calloc zeroes reused payload and rejects overflow: PASS\n");
+}
+
+static void test_realloc_paths(void)
+{
+    unsigned char *left = my_malloc(128U);
+    void *right = my_malloc(128U);
+    unsigned char *grown;
+    header_t *left_header;
+    size_t combined_size;
+
+    assert(left != NULL && right != NULL);
+    for (size_t index = 0U; index < 128U; ++index) {
+        left[index] = (unsigned char)(index ^ 0xa5U);
+    }
+    my_free(right);
+
+    /* Growth into a free successor used to copy the whole old block (160
+     * bytes for a 128-byte request), reading past the initialized payload. */
+    grown = my_realloc(left, 160U);
+    assert(grown == left);
+    assert(header_for(grown)->requested == 160U);
+    for (size_t index = 0U; index < 128U; ++index) {
+        assert(grown[index] == (unsigned char)(index ^ 0xa5U));
+    }
+    for (size_t index = 128U; index < 160U; ++index) {
+        grown[index] = (unsigned char)index;
+    }
+
+    right = my_malloc(128U);
+    assert(right != NULL);
+    my_free(right);
+    left_header = header_for(grown);
+    combined_size = left_header->size + left_header->next->size;
+    grown = my_realloc(grown, 64U);
+    assert(grown == left);
+    assert(header_for(grown)->requested == 64U);
+    assert(header_for(grown)->next->requested == 0U);
+    assert(header_for(grown)->size + header_for(grown)->next->size ==
+           combined_size);
+    for (size_t index = 0U; index < 64U; ++index) {
+        assert(grown[index] == (unsigned char)(index ^ 0xa5U));
+    }
+    assert(debug_validate_heap() == 0);
+    my_free(grown);
+    printf("realloc exact payload copy, in-place growth, shrink/coalesce: PASS\n");
+
+    left = my_malloc(96U);
+    assert(left != NULL);
+    for (size_t index = 0U; index < 96U; ++index) {
+        left[index] = (unsigned char)(index + 1U);
+    }
+    grown = my_realloc(left, 16384U);
+    assert(grown != NULL);
+    for (size_t index = 0U; index < 96U; ++index) {
+        assert(grown[index] == (unsigned char)(index + 1U));
+    }
+    my_free(grown);
+    printf("realloc moving growth preserves exactly the old request: PASS\n");
+}
+
+static void test_sbrk_discontinuity(void)
+{
+    void *first = my_malloc(64U);
+    void *gap;
+    size_t managed_span;
+    long page_size = sysconf(_SC_PAGESIZE);
+
+    assert(first != NULL);
+    assert(page_size > 0);
+    assert(debug_heap_head() != NULL);
+    gap = sbrk(0);
+    assert(gap != (void *)-1);
+    managed_span = (size_t)((unsigned char *)gap -
+                            (unsigned char *)debug_heap_base());
+    gap = sbrk((intptr_t)page_size);
+    assert(gap != (void *)-1);
+    memset(gap, 0, (size_t)page_size);
+    errno = 0;
+    /* Exceed every existing free block, forcing the guarded growth path. */
+    assert(my_malloc(managed_span * 2U) == NULL);
+    assert(errno == ENOTSUP);
+    my_free(first);
+    printf("external sbrk discontinuity rejected without false links: PASS\n");
+}
+
+static void test_split_and_zero_semantics(void)
+{
+    void *first = my_malloc(512U);
+    void *second = my_malloc(64U);
+    void *split;
+    void *null_allocation;
+
+    assert(first != NULL && second != NULL);
+    my_free(first);
+    split = my_malloc(64U);
+    assert(split == first);
+    assert(header_for(split)->size < 512U + sizeof(header_t));
+    assert(debug_validate_heap() == 0);
+    my_free(split);
+    my_free(second);
+
+    null_allocation = my_realloc(NULL, 33U);
+    assert(null_allocation != NULL);
+    assert(my_realloc(null_allocation, 0U) == NULL);
+    assert(debug_validate_heap() == 0);
+    printf("splitting and realloc NULL/zero semantics: PASS\n");
+}
+
+int main(void)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("Allocator unit tests\n");
+    test_alignment_and_coalescing();
+    test_zero_and_overflow();
+    test_calloc_and_reuse();
+    test_realloc_paths();
+    test_sbrk_discontinuity();
+    test_split_and_zero_semantics();
+    printf("all unit tests passed\n");
     return 0;
 }
