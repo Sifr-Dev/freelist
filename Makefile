@@ -12,12 +12,27 @@ TSAN_FLAGS := -fsanitize=thread -fno-omit-frame-pointer
 
 TESTS := test_malloc test_invariants test_model test_threads test_corruption stress_test
 TSAN_TESTS := test_malloc test_invariants test_model test_threads stress_test
+LIB := build/libfreelist.a
+PREFIX ?= /usr/local
+DESTDIR ?=
+AR ?= ar
+RANLIB ?= ranlib
+INSTALL ?= install
+ARFLAGS = rcs
 BINS := $(addprefix build/,$(TESTS))
 ASAN_BINS := $(addprefix build/asan/,$(TESTS))
 UBSAN_BINS := $(addprefix build/ubsan/,$(TESTS))
 TSAN_BINS := $(addprefix build/tsan/,$(TSAN_TESTS))
 
-all: $(BINS)
+all: $(BINS) $(LIB)
+
+build/malloc.o: src/malloc.c src/malloc.h
+	@mkdir -p $(@D)
+	$(CC) $(COMMON_FLAGS) -c src/malloc.c -o $@
+
+$(LIB): build/malloc.o
+	$(AR) $(ARFLAGS) $@ $<
+	$(RANLIB) $@
 
 build/%: src/malloc.c src/%.c src/malloc.h
 	@mkdir -p $(@D)
@@ -65,7 +80,16 @@ stress: build/stress_test
 invariant: build/test_invariants
 	./build/test_invariants
 
+install: $(LIB)
+	$(INSTALL) -d $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/include $(DESTDIR)$(PREFIX)/share/licenses/freelist
+	$(INSTALL) -m644 $(LIB) $(DESTDIR)$(PREFIX)/lib/libfreelist.a
+	$(INSTALL) -m644 src/malloc.h $(DESTDIR)$(PREFIX)/include/freelist.h
+	$(INSTALL) -m644 LICENSE $(DESTDIR)$(PREFIX)/share/licenses/freelist/LICENSE
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/lib/libfreelist.a $(DESTDIR)$(PREFIX)/include/freelist.h $(DESTDIR)$(PREFIX)/share/licenses/freelist/LICENSE
+
 clean:
 	rm -rf build
 
-.PHONY: all test asan ubsan sanitize tsan stress invariant clean
+.PHONY: all test asan ubsan sanitize tsan stress invariant clean install uninstall

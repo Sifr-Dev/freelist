@@ -34,6 +34,22 @@ make CC=clang sanitize
 make CC=gcc tsan
 ```
 
+`make all` also builds `build/libfreelist.a`, a static archive containing the
+allocator implementation. To install the library, public header, and license:
+
+```sh
+make PREFIX=/usr/local install
+# Or stage a package without touching the host:
+make DESTDIR=/tmp/freelist-package PREFIX=/usr install
+sh tests/install-check.sh
+```
+
+The installed consumer-facing header is `freelist.h`; the public allocation
+functions remain `my_malloc`, `my_free`, `my_calloc`, and `my_realloc`. The
+static archive is a build artifact for linking into an application, not a
+standalone command-line program. `make uninstall` removes the installed archive,
+header, and license.
+
 The compiler flags treat warnings as errors and include conversion, sign,
 shadowing, alignment, format, and prototype checks. The default `make test`
 runs unit tests, raw/synchronized invariant checks, a deterministic randomized
