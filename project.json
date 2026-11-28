@@ -1,0 +1,9 @@
+{
+  "name": "freelist",
+  "description": "Study free-list allocator (not production)",
+  "stack": [
+    "make"
+  ],
+  "status": "experimental",
+  "primary_language": "C"
+}
