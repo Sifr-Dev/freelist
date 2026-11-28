@@ -1,9 +1,13 @@
 {
-  "name": "freelist",
-  "description": "Study free-list allocator (not production)",
+  "name": "Lattice",
+  "displayName": "Lattice",
+  "repo": "freelist",
+  "description": "Study of a free-list allocator in C11, not production software",
+  "summary": "Educational malloc-family allocator over sbrk with an address-ordered free list, invariant checks, corruption subprocesses and sanitizer targets.",
   "stack": [
     "make"
   ],
   "status": "experimental",
-  "primary_language": "C"
+  "primary_language": "C",
+  "license": "MIT"
 }

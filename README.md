@@ -1,26 +1,60 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.svg">
-    <img alt="freelist — built from zero" src=".github/banner-light.svg" width="100%">
-  </picture>
-</p>
+# Lattice
 
-# freelist
+**A study of a free-list allocator in C11 — explicitly not production software.**
 
-An educational, explicitly linked `malloc`-family allocator in C11, using POSIX
-`sbrk(2)` and a single address-ordered free list. The public names are
-`my_malloc`, `my_free`, `my_calloc`, and `my_realloc`.
+[![C](https://img.shields.io/badge/C-C11-00599c?style=for-the-badge&logo=c&logoColor=white&labelColor=1b1f27)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
+[![CI](https://github.com/Sifr-Dev/freelist/actions/workflows/ci.yml/badge.svg)](https://github.com/Sifr-Dev/freelist/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/LICENSE-MIT-2ea043?style=for-the-badge&labelColor=1b1f27)](LICENSE)
 
-**This is a study project, not a production allocator or a drop-in replacement
-for the C library allocator.** See [Design and security limits](#design-and-security-limits).
+> The GitHub repository remains `Sifr-Dev/freelist`; Lattice is the project
+> name. The public allocation symbols (`my_malloc`, `my_free`, `my_calloc`,
+> `my_realloc`) and the installed header (`freelist.h`) are unchanged.
 
-## Build and verify
+## What it is
 
-Requirements: a C11 compiler, POSIX threads, `fork`/`waitpid` for corruption
-tests, and GNU Make. Sanitizer targets additionally require compiler/runtime
-support for those sanitizers.
+Lattice is an educational `malloc`-family allocator built on POSIX `sbrk(2)`
+and an address-ordered free list. It exists to make allocator invariants,
+coalescing, alignment, corruption detection and sanitizer behaviour explicit
+and testable. It is a study project, not a drop-in replacement for the C
+library allocator.
+
+## Current capabilities
+
+- **First-fit allocation with splitting, bidirectional coalescing and
+  realloc growth into a free successor.**
+  Proof: `src/malloc.c`; `make CC=gcc test` runs the unit suite.
+- **Aligned blocks and exact requested-size tracking**, with overflow checks
+  and `ENOMEM`/`ENOTSUP` failure paths.
+  Proof: `src/malloc.c`, `src/malloc.h`,
+  `build/test_malloc` (`splitting and realloc NULL/zero semantics`).
+- **Raw and synchronized invariant checks** over the whole heap.
+  Proof: `src/test_invariants.c`,
+  `build/test_invariants` (`raw and synchronized invariants after each
+  transition: PASS`).
+- **Deterministic randomized differential model** against a reference model
+  across three seeds and 12,000 operations each.
+  Proof: `src/test_model.c`, `build/test_model`.
+- **Concurrency stress test**: eight threads × 5,000 deterministic operations,
+  with a thread continuously checking global invariants.
+  Proof: `src/test_threads.c`, `build/test_threads`.
+- **Corruption subprocesses** that require `SIGABRT` for double free, realloc
+  after free, interior/foreign pointers, bad magic, bad size, bad link, bad
+  requested size, and corruption during allocation.
+  Proof: `src/test_corruption.c`, `build/test_corruption`.
+- **Static library and install target**, with an installed-consumer check.
+  Proof: `make` builds `build/libfreelist.a`; `tests/install-check.sh`.
+- **Sanitizer targets** for AddressSanitizer, UndefinedBehaviorSanitizer and
+  optional ThreadSanitizer.
+  Proof: `make asan`, `make ubsan`, `make tsan` in the `Makefile`.
+
+## Quick start
+
+Requirements: a C11 compiler, POSIX threads, `fork`/`waitpid` for the
+corruption tests, and GNU Make.
 
 ```sh
+git clone https://github.com/Sifr-Dev/freelist.git
+cd freelist
 make clean
 make CC=gcc all
 make CC=gcc test
@@ -29,131 +63,86 @@ make CC=gcc ubsan
 make CC=clang all
 make CC=clang test
 make CC=clang sanitize
+```
 
-# Optional where ThreadSanitizer is supported:
+Optional where ThreadSanitizer is supported:
+
+```sh
 make CC=gcc tsan
 ```
 
-`make all` also builds `build/libfreelist.a`, a static archive containing the
-allocator implementation. To install the library, public header, and license:
+Link the static archive into a consumer:
 
 ```sh
-make PREFIX=/usr/local install
-# Or stage a package without touching the host:
-make DESTDIR=/tmp/freelist-package PREFIX=/usr install
+make DESTDIR=/tmp/lattice-package PREFIX=/usr install
 sh tests/install-check.sh
 ```
 
-The installed consumer-facing header is `freelist.h`; the public allocation
-functions remain `my_malloc`, `my_free`, `my_calloc`, and `my_realloc`. The
-static archive is a build artifact for linking into an application, not a
-standalone command-line program. `make uninstall` removes the installed archive,
-header, and license.
+The installed header is `freelist.h`; the allocation symbols remain `my_*`.
+`make uninstall` removes the installed archive, header and licence.
 
-The compiler flags treat warnings as errors and include conversion, sign,
-shadowing, alignment, format, and prototype checks. The default `make test`
-runs unit tests, raw/synchronized invariant checks, a deterministic randomized
-differential model, a concurrency stress test, explicit corruption subprocesses,
-and a deterministic 1,000-block stress test.
+## Verification
 
-- Model seeds: `0x1`, `0xc0ffee11`, and `0xdeadbeef`; 12,000 operations each.
-- Concurrency: eight threads, 5,000 operations per thread, plus a thread that
-  repeatedly checks global invariants.
-- Corruption tests require `SIGABRT` in a forked child for double free, realloc
-  after free, interior/foreign pointers, bad magic, size, link, and requested
-  size, and corruption encountered during allocation.
+Executed on 2026-11-28 on Linux x86-64 with GCC 16.2.1:
 
-`make asan` runs all six test executables with AddressSanitizer and leak
-checking. `make ubsan` runs all six with non-recovering undefined-behavior
-checks. `make tsan` runs the five non-corruption executables: intentional death
-subprocesses add noise without improving ThreadSanitizer coverage. The suite
-uses only this allocator's `my_*` symbols, never `LD_PRELOAD`, symbol
-interposition, or replacement of glibc allocation, so sanitizer and C library
-allocators do not collide.
+```sh
+make clean
+make CC=gcc test
+```
 
-## API and deliberate semantics
+Observed: all six test executables passed — unit tests, raw/synchronized
+invariants, three deterministic model seeds (12,000 operations each),
+eight-thread concurrency stress, nine corruption cases requiring `SIGABRT`,
+and the deterministic 1,000-block stress test. The sanitizer targets are
+available but were not re-run in this verification pass; CI runs
+`make CC=<gcc|clang> sanitize`.
 
-- `void *my_malloc(size_t size)` returns a payload aligned to
-  `_Alignof(max_align_t)`. A zero request returns `NULL`.
-- `void my_free(void *pointer)` accepts `NULL`; other invalid pointers and a
-  detected double free are fatal (see below).
-- `void *my_calloc(size_t count, size_t size)` checks multiplication overflow,
-  then zeroes the entire requested payload. If either argument is zero it
-  returns `NULL` through `my_malloc(0)`.
-- `void *my_realloc(void *pointer, size_t size)` handles `NULL` like
-  `my_malloc(size)`, and a zero size frees `pointer` and returns `NULL`.
-  Moving growth preserves `min(old_requested_size, size)` bytes. A failed
-  allocation leaves the original allocation intact.
-- Size-rounding overflow and impossible `sbrk` growth requests fail with
-  `errno = ENOMEM`. An `sbrk` failure retains the error set by `sbrk`.
-- If another user has moved the program break and made the managed heap
-  discontinuous, growth fails with `errno = ENOTSUP` rather than creating
-  corrupt list links.
+## Architecture
 
-These zero-size choices are deliberate and need not match every libc.
-`header_t`, `print_heap`, and the `debug_*` helpers are diagnostic/educational,
-not a stable binary interface. `debug_heap_head` and `debug_heap_base` are raw
-views for quiescent single-threaded checks; use synchronized
-`debug_validate_heap()` in concurrent tests.
+```text
+src/malloc.c        allocator implementation and public my_* API
+src/malloc.h        installed public header
+src/test_malloc.c   unit and API-semantics tests
+src/test_invariants.c  raw and synchronized heap invariants
+src/test_model.c    randomized differential model
+src/test_threads.c  concurrency stress and invariant observer
+src/test_corruption.c  forked corruption cases
+src/stress_test.c   deterministic 1,000-block stress
+tests/install-check.sh  installed-header and archive consumer check
+Makefile            build, test, sanitizer, install and uninstall targets
+```
 
-## Design and security limits
+## Benchmarks
 
-### Data structure and invariants
+No benchmark is published. Allocation and free are O(number of blocks); the
+project makes no throughput claim and is not intended for performance work.
 
-Each block has a header containing total block size, exact requested payload
-size, next-block pointer, and a state cookie. Block size includes the header;
-all sizes and addresses preserve `_Alignof(max_align_t)` alignment.
+## Limitations
 
-Under one global mutex, allocation uses first fit and splits a sufficiently
-large block. Free and realloc coalesce both physical neighbors, including a
-free successor after shrink/growth. For every valid heap:
-
-1. The list is contiguous and address ordered over exactly
-   `[heap_base, heap_end)`.
-2. Every block is in range, aligned, has an aligned size of at least
-   `sizeof(header_t) + _Alignof(max_align_t)`, and has a valid state cookie.
-3. Every used block's requested size fits its payload; a free block's requested
-   size is zero.
-4. `next` is either the exact physical successor or `NULL`; the last block is
-   `tail` and ends at `heap_end`.
-5. No two adjacent blocks are both free.
-
-`realloc` grows into a free successor when possible and otherwise allocates,
-copies only the exact old requested payload, and frees the old block. It does
-not copy rounded capacity as though it were initialized user data.
-
-### Threading, process, and corruption boundaries
-
-- One mutex protects all list metadata and the `sbrk` growth operation.
-  Independent allocations can be used concurrently. As with standard
-  allocation APIs, callers must not race operations on the same allocation,
-  use an object after freeing it, or read/write outside its requested size.
-- `sbrk` changes process-global state. Do not call `sbrk` directly or combine
-  this allocator with another allocator/runtime that moves the program break
-  while it is active. A discontinuity is rejected at the next growth, but this
-  cannot make arbitrary mixed allocator use safe. The heap is never returned
-  to the OS and allocation/free are O(number of blocks).
+- One global mutex; allocation and free scale poorly and are O(number of
+  blocks).
+- The heap is never returned to the OS.
+- `sbrk` changes process-global state. Do not mix this allocator with another
+  allocator or runtime that moves the program break.
 - Metadata checks are best-effort debugging aids, not a security boundary.
-  Aligned interior pointers, a header overwritten with plausible values,
-  undetected payload overruns, and malicious corruption can still evade
-  checks. Detected corruption aborts immediately; it is not recoverable.
-- The allocator is not async-signal-safe, fork-safe in a multithreaded process,
-  or cancellation-safe. No hardened freelist encoding, guard pages, quarantine,
-  or protection against use-after-free is claimed.
+  Aligned interior pointers and plausible header corruption can evade them.
+- Detected corruption aborts immediately; it is not recoverable.
+- Not async-signal-safe, fork-safe in a multithreaded process, or
+  cancellation-safe.
+- No hardened freelist encoding, guard pages, quarantine or use-after-free
+  protection.
+- The zero-size and invalid-pointer semantics are deliberate and need not match
+  every libc.
+- Development API and layout are `0.x`; binary stability is not promised.
 
-## Continuous integration and releases
+## Roadmap (NOT IMPLEMENTED)
 
-`.github/workflows/ci.yml` runs strict GCC and Clang builds/tests plus ASan and
-UBSan on Ubuntu. ThreadSanitizer remains a separate optional target because its
-availability and behavior vary by toolchain and host environment.
-
-Releases use **0.x** semantic versioning while the educational API and layout
-may change. Increment the patch version for compatible fixes, the minor version
-for new features or documented behavior/API changes, and use `0.x.y` git tags
-matching the release. Every release must document tested compilers/platforms,
-link the successful CI run, and restate that this is not production/drop-in
-allocator software. No 1.0 or production-safety claim is implied by these
-correctness tests.
+- Per-thread caches or size-class bins for a comparative study.
+- Guard pages and quarantine as an optional hardening experiment.
+- Heap return to the OS.
+- A reproducible benchmark against the system allocator with documented
+  hardware and workload.
+- A stable ABI beyond the educational one.
 
 ## License
 
