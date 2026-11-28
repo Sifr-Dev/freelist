@@ -93,9 +93,9 @@ make CC=gcc test
 Observed: all six test executables passed — unit tests, raw/synchronized
 invariants, three deterministic model seeds (12,000 operations each),
 eight-thread concurrency stress, nine corruption cases requiring `SIGABRT`,
-and the deterministic 1,000-block stress test. The sanitizer targets are
-available but were not re-run in this verification pass; CI runs
-`make CC=<gcc|clang> sanitize`.
+and the deterministic 1,000-block stress test. `make CC=clang sanitize` also
+passed with Clang 23.1.5 (AddressSanitizer with leak checking and
+UndefinedBehaviorSanitizer). ThreadSanitizer was not run in this pass.
 
 ## Architecture
 
